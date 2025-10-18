@@ -1,0 +1,9 @@
+[project]
+name = "sonos-fpp-sync"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "soco>=0.30.10",
+    "twisted>=25.5.0",
+]
