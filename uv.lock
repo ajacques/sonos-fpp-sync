@@ -176,7 +176,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sonos-fpp"
+name = "sonos-fpp-sync"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
