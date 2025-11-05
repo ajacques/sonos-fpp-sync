@@ -27,6 +27,7 @@ message_type = ProtoField.uint8("fpp.message_type", "Message Type")
 extra_data_len = ProtoField.int16("fpp.extra_data_len", "Extra Data Length", base.DEC)
 command = ProtoField.string("fpp.command", "Command to Run")
 local ef_data_len = ProtoExpert.new("fpp.extra_data_len.expert", "Extra Data Length is invalid", expert.group.MALFORMED, expert.severity.ERROR)
+local ping_pkt_ver = ProtoField.uint8("fpp.ping.pkt_ver", "Ping Packet Version", base.HEX)
 local ping_type = ProtoField.uint8("fpp.ping.subtype", "Ping Subtype")
 local ping_hardware_type = ProtoField.uint8("fpp.ping.hardware_type", "App/Hardware Type", base.HEX)
 local major_version = ProtoField.uint16("fpp.ping.major_version", "Major Version", base.DEC)
@@ -51,6 +52,7 @@ fpp_protocol.fields = {
   extra_data_len,
   command,
   ping_type,
+  ping_pkt_ver,
   ping_hardware_type,
   version_str,
   major_version,
@@ -176,12 +178,16 @@ function fpp_protocol.dissector(buffer, pinfo, tree)
     else
       subtree:add_proto_expert_info(ef_data_len)
     end
-    local ping_version = buffer(8, 1):le_uint()
-    local ping_version_tree = subtree:add_le(ping_type, buffer(8, 1), ping_version)
-    if ping_version == 0 then
-      ping_version_tree:append_text(" (Unsolicited Ping or Response)")
-    elseif ping_version == 1 then
-      ping_version_tree:append_text(" (Discover)")
+    if (length - 7) < extra_data_len_value then
+      subtree:add_proto_expert_info(ef_data_len, "Packet is too short. Expected: " .. extra_data_len_value .. " Actual: " .. (length - 7))
+    end
+    subtree:add_le(ping_pkt_ver, buffer(7, 1))
+    local ping_subtype = buffer(8, 1):le_uint()
+    local ping_subtype_tree = subtree:add_le(ping_type, buffer(8, 1), ping_subtype)
+    if ping_subtype == 0 then
+      ping_subtype_tree:append_text(" (Unsolicited Ping or Response)")
+    elseif ping_subtype == 1 then
+      ping_subtype_tree:append_text(" (Discover)")
     end
     
     local hardware_type_f = subtree:add_le(ping_hardware_type, buffer(9, 1))
