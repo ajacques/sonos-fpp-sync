@@ -98,21 +98,22 @@ def encode_sync_packet(sequence_name: str, fseq_file: SeqDetails, seconds_elapse
 
 def encode_hello_packet():
     return struct.pack(
-        '<4sBHBBBHHB4s65s41s41s121s', 
+        '<4sBHBBBHHB4s65s41s41s121s14s', 
         'FPPD'.encode('ascii'), 
         4, # Message Type
         294, # Extra Data Length
+        3, 
         0, 
-        0, 
-        1, 
-        2, # version major
-        2, # version minor
+        1, # Hardware Type 
+        512, # version major
+        512, # version minor
         4, # operating mode
         get_lan_addr(), 
         encode_str('SONOSSYNC', 65), # hostname
-        encode_str('version', 41), 
+        encode_str('1.1', 41), 
         encode_str('softwareemulated', 41), 
-        encode_str('1-2', 121)
+        encode_str('0-1', 121),
+        ''.ljust(14, '\0').encode('ascii')
     )
 
 class MulticastListener(DatagramProtocol):
@@ -159,7 +160,6 @@ def main():
 
     device.clear_queue()
     local_ip = get_lan_addr_str()
-    print(local_ip)
     for show in fseq_table:
         device.add_uri_to_queue(f"http://{local_ip}:8080/{show.stream_path}")
 
