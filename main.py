@@ -9,7 +9,7 @@ from pprint import pprint
 
 import soco
 from soco import events_twisted
-from twisted.internet import reactor
+from twisted.internet import reactor, task
 from twisted.internet.protocol import DatagramProtocol
 from twisted.web import static
 from twisted.web.resource import Resource
@@ -59,8 +59,6 @@ def signal_handler(sig, frame):
 # Register the signal handler
 signal.signal(signal.SIGINT, signal_handler)
 
-print("Listening for FPP multisync packets on", MULTICAST_ADDRESS, ":", PORT)
-
 
 def get_lan_addr_str() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -94,18 +92,16 @@ def parse_time(time_str):
 
 
 def encode_sync_packet(
-    sequence_name: str, fseq_file: SeqDetails, seconds_elapsed, total_seconds
+    sequence_name: str, fseq_file: SeqDetails, sync_action: int, seconds_elapsed: int, total_seconds: int
 ):
     return struct.pack(
         f"<4sBHBBIf{len(sequence_name)}sB",
         "FPPD".encode("ascii"),
         1,  # Packet Type
         (11 + len(sequence_name)),  # packet length
-        2,  # Sync Action
+        sync_action,  # Sync Action
         0,  # Sync Type
-        int(
-            (seconds_elapsed / total_seconds) * fseq_file.number_of_frames
-        ),  # Frame Number
+        int((seconds_elapsed / total_seconds) * fseq_file.num_frames),  # Frame Number
         seconds_elapsed,  # Seconds Elapsed
         sequence_name.encode("ascii"),  # File Name
         0,  # Null terminated string
@@ -132,6 +128,15 @@ def encode_hello_packet():
         "".ljust(14, "\0").encode("ascii"),
     )
 
+def sync_beat():
+    if state == 'PLAYING':
+        cur_time = datetime.datetime.now()
+        delta = cur_time - start_time
+        secs = delta.total_seconds()
+        sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 2, secs, 184)
+        pass
+
+syncTask = task.LoopingCall(sync_beat)
 
 class MulticastListener(DatagramProtocol):
     def startProtocol(self):
@@ -141,11 +146,14 @@ class MulticastListener(DatagramProtocol):
         # Introduce ourselves to the FPP MultiSync swarm
         self.transport.write(encode_hello_packet(), (MULTICAST_ADDRESS, PORT))
 
-    def datagramReceived(self, data, address):
-        if data[:4].decode("utf-8") != "FPPD":
-            print("Dropping non FPPD packet", str(data[:4]))
+    def send_sync_packet(self, sequence_name: str, fseq_file: SeqDetails, action: int, seconds_elapsed: int, total_seconds: int):
+        self.transport.write(encode_sync_packet(sequence_name, fseq_file, action, seconds_elapsed, total_seconds), (MULTICAST_ADDRESS, PORT))
+
+    def datagramReceived(self, datagram, addr):
+        if datagram[:4].decode("utf-8") != "FPPD":
+            print("Dropping non FPPD packet", str(datagram[:4]))
             return
-        print(f"Received packet from {address}")
+        #print(f"Received packet from {addr}")
 
 
 sonos_listener = MulticastListener()
@@ -153,26 +161,41 @@ sonos_listener = MulticastListener()
 
 def process_sonos_packet(event: soco.events_base.Event):
     pprint(event.variables)
+    global state
+    global start_time
 
-    cur_time = datetime.datetime.now()
     # elapsed = parse_time(event.variables['current_track_position'])
     duration = parse_time(event.variables["current_track_duration"])
 
     # start_time = cur_time - datetime.timedelta(seconds=elapsed)
 
-    event.variables
-    if event.variables["transport_state"] == "PLAYING" or True:
-        # print(start_time, duration)
-        sonos_listener.transport.write(
-            encode_sync_packet("romeo.fseq", fseq_table[0], 0, duration),
-            ("192.168.2.199", PORT),
-        )
+    state = event.variables['transport_state']
+    if state == 'TRANSITIONING':
+        sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 0, 0, duration)
+        if not syncTask.running:
+            syncTask.start(1)
+    elif state == 'PLAYING':
+        cur_time = datetime.datetime.now()
+        position = parse_time(device.get_current_track_info()['position'])
+        start_time = cur_time - datetime.timedelta(seconds=position)
+    elif state == 'STOPPED' or state == 'PAUSED_PLAYBACK':
+        if syncTask.running:
+            syncTask.stop()
+        sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 1, 0, duration)
+    # if event.variables["transport_state"] == "PLAYING" or True:
+    # print(start_time, duration)
+    # sonos_listener.transport.write(
+    #    encode_sync_packet("romeo.fseq", fseq_table[0], 0, duration),
+    #    ("192.168.2.199", PORT),
+    # )
     # print("Packet")
     # pprint(event)
 
 
 def main():
-    device = soco.discovery.any_soco()
+    global device
+    device = soco.discovery.by_name("Media Room")
+    print(device)
 
     device = device.group.coordinator
     sub = device.avTransport.subscribe(auto_renew=True).subscription
@@ -187,10 +210,13 @@ def main():
     device.clear_queue()
     local_ip = get_lan_addr_str()
     for show in fseq_table:
-        device.add_uri_to_queue(f"http://{local_ip}:8080/{show.stream_path}")
+        url = f"http://{local_ip}:8080/{show.stream_path}"
+        print(url)
+        device.add_uri_to_queue(url)
 
 
 if __name__ == "__main__":
+    print("Listening for FPP multisync packets on", MULTICAST_ADDRESS, ":", PORT)
     reactor.listenMulticast(PORT, sonos_listener, listenMultiple=True)
     reactor.listenTCP(8080, Site(static.File("./songs")))
     reactor.callWhenRunning(main)
