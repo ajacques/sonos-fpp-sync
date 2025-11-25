@@ -128,13 +128,25 @@ def encode_hello_packet():
         "".ljust(14, "\0").encode("ascii"),
     )
 
+def refresh_sonos_start():
+    global start_time
+    cur_time = datetime.datetime.now()
+    pos = device.get_current_track_info()['position']
+    print(pos)
+    position = parse_time(pos)
+    start_time = cur_time - datetime.timedelta(seconds=position)
+
 def sync_beat():
     if state == 'PLAYING':
-        cur_time = datetime.datetime.now()
-        delta = cur_time - start_time
-        secs = delta.total_seconds()
-        sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 2, secs, 184)
-        pass
+        try:
+            cur_time = datetime.datetime.now()
+
+            pos = device.get_current_track_info()['position']
+            print(pos)
+            position = parse_time(pos)
+            sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 2, position, 184)
+        except Exception as e:
+            print(e)
 
 syncTask = task.LoopingCall(sync_beat)
 
@@ -158,7 +170,6 @@ class MulticastListener(DatagramProtocol):
 
 sonos_listener = MulticastListener()
 
-
 def process_sonos_packet(event: soco.events_base.Event):
     pprint(event.variables)
     global state
@@ -175,9 +186,9 @@ def process_sonos_packet(event: soco.events_base.Event):
         if not syncTask.running:
             syncTask.start(1)
     elif state == 'PLAYING':
-        cur_time = datetime.datetime.now()
-        position = parse_time(device.get_current_track_info()['position'])
-        start_time = cur_time - datetime.timedelta(seconds=position)
+        if not syncTask.running:
+            syncTask.start(1)
+        refresh_sonos_start()
     elif state == 'STOPPED' or state == 'PAUSED_PLAYBACK':
         if syncTask.running:
             syncTask.stop()
