@@ -1,6 +1,16 @@
 -- https://github.com/FalconChristmas/fpp/blob/master/docs/ControlProtocol.txt
 fpp_protocol = Proto("FPP_MULTISYNC", "FPP MultiSync Protocol")
 
+local message_types = {
+  [0] = "Legacy Command",
+  [1] = "MultiSync",
+  [2] = "Event",
+  [3] = "Send Blanking Data",
+  [4] = "Ping",
+  [5] = "Plugin",
+  [6] = "FPP Command"
+}
+
 local operating_modes = {
   [0] = "Unknown",
   [1] = "Bridge",
@@ -22,10 +32,10 @@ local multisync_types = {
   [1] = "Media"
 }
 
-header = ProtoField.string("fpp_multisync.header", "Header")
-message_type = ProtoField.uint8("fpp_multisync.message_type", "Message Type")
-extra_data_len = ProtoField.int16("fpp_multisync.extra_data_len", "Extra Data Length", base.DEC)
-command = ProtoField.string("fpp_multisync.command", "Command to Run")
+local header = ProtoField.string("fpp_multisync.header", "Header")
+local message_type = ProtoField.uint8("fpp_multisync.message_type", "Message Type", base.DEC, message_types)
+local extra_data_len = ProtoField.int16("fpp_multisync.extra_data_len", "Extra Data Length", base.DEC)
+local command = ProtoField.string("fpp_multisync.command", "Command to Run")
 local ef_data_len = ProtoExpert.new("fpp_multisync.extra_data_len.expert", "Extra Data Length is invalid", expert.group.MALFORMED, expert.severity.ERROR)
 local ping_pkt_ver = ProtoField.uint8("fpp_multisync.ping.pkt_ver", "Ping Packet Version", base.HEX)
 local ping_type = ProtoField.uint8("fpp_multisync.ping.subtype", "Ping Subtype")
@@ -123,21 +133,6 @@ local deviceCodes = {
   [0xFF] = "SanDevices"
 }
 
-function get_message_type(msg_type)
-  local opcode_name = "Unknown"
-
-      if msg_type ==    0 then opcode_name = "Legacy Command"
-  elseif msg_type == 1 then opcode_name = "MultiSync"
-  elseif msg_type == 2 then opcode_name = "Event"
-  elseif msg_type == 3 then opcode_name = "Send Blanking Data"
-  elseif msg_type == 4 then opcode_name = "Ping"
-  elseif msg_type == 5 then opcode_name = "Plugin"
-  elseif msg_type == 6 then opcode_name = "FPP Command"
-  end
-
-  return opcode_name
-end
-
 function fpp_protocol.dissector(buffer, pinfo, tree)
   length = buffer:len()
   if length == 0 then return end
@@ -155,8 +150,7 @@ function fpp_protocol.dissector(buffer, pinfo, tree)
   end
 
   local message_type_number = buffer(4, 1):le_uint()
-  local message_type_name = get_message_type(message_type_number)
-  subtree:add_le(message_type, buffer(4, 1)):append_text( " (" .. message_type_name .. ")")
+  subtree:add_le(message_type, buffer(4, 1))
 
   local extra_data_len_value_b = buffer(5, 2)
   local extra_data_len_value = extra_data_len_value_b:le_uint()
