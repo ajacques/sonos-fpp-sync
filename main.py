@@ -153,13 +153,22 @@ syncTask = task.LoopingCall(sync_beat)
 class MulticastListener(DatagramProtocol):
     def startProtocol(self):
         # Join the multicast group
-        self.transport.joinGroup(MULTICAST_ADDRESS)
+        self.transport.joinGroup(MULTICAST_ADDRESS, get_lan_addr_str())
 
         # Introduce ourselves to the FPP MultiSync swarm
         self.transport.write(encode_hello_packet(), (MULTICAST_ADDRESS, PORT))
 
     def send_sync_packet(self, sequence_name: str, fseq_file: SeqDetails, action: int, seconds_elapsed: int, total_seconds: int):
         self.transport.write(encode_sync_packet(sequence_name, fseq_file, action, seconds_elapsed, total_seconds), (MULTICAST_ADDRESS, PORT))
+
+    def send_blanking_data(self):
+        pkt = struct.pack(
+            "<4sBHB",
+            "FPPD".encode("ascii"),
+            3,  # Message Type
+            0,  # Extra Data Length
+        )
+        self.transport.write(pkt, (MULTICAST_ADDRESS, PORT))
 
     def datagramReceived(self, datagram, addr):
         if datagram[:4].decode("utf-8") != "FPPD":
@@ -193,6 +202,7 @@ def process_sonos_packet(event: soco.events_base.Event):
         if syncTask.running:
             syncTask.stop()
         sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 1, 0, duration)
+        sonos_listener.send_blanking_data()
     # if event.variables["transport_state"] == "PLAYING" or True:
     # print(start_time, duration)
     # sonos_listener.transport.write(
