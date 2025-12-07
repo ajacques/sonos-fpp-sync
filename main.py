@@ -4,6 +4,7 @@ import signal
 import socket
 import struct
 import sys
+from enum import Enum
 from collections import namedtuple
 from pprint import pprint
 
@@ -25,8 +26,13 @@ device = soco.discovery.any_soco()
 
 device = device.group.coordinator
 
-SeqDetails = namedtuple("SequenceInfo", ["num_frames", "fseq_file", "stream_path"])
+SeqDetails = namedtuple("SequenceInfo", ["num_frames", "fseq_file", "stream_path", "duration"])
 
+class FPPSyncType(Enum):
+    Start = 0
+    Stop = 1
+    Sync = 2
+    Open = 3
 
 def load_show_plan() -> list[SeqDetails]:
     result = []
@@ -34,10 +40,10 @@ def load_show_plan() -> list[SeqDetails]:
         show_plan = json.load(f)
         for seq in show_plan:
             fseq_file_name = seq["fseq_file"]
-            with open(fseq_file_name, "rb") as fseq_file_fd:
+            with open(f"show/{fseq_file_name}", "rb") as fseq_file_fd:
                 fseq_file = fseq.parse(fseq_file_fd)
                 num_frames = fseq_file.number_of_frames
-            result.append(SeqDetails(num_frames, fseq_file_name, seq["stream_path"]))
+            result.append(SeqDetails(num_frames, fseq_file_name, seq["stream_path"], seq['seconds']))
     return result
 
 
@@ -92,14 +98,14 @@ def parse_time(time_str):
 
 
 def encode_sync_packet(
-    sequence_name: str, fseq_file: SeqDetails, sync_action: int, seconds_elapsed: int, total_seconds: int
+    sequence_name: str, fseq_file: SeqDetails, sync_action: FPPSyncType, seconds_elapsed: int, total_seconds: int
 ):
     return struct.pack(
         f"<4sBHBBIf{len(sequence_name)}sB",
         "FPPD".encode("ascii"),
         1,  # Packet Type
         (11 + len(sequence_name)),  # packet length
-        sync_action,  # Sync Action
+        sync_action.value,  # Sync Action
         0,  # Sync Type
         int((seconds_elapsed / total_seconds) * fseq_file.num_frames),  # Frame Number
         seconds_elapsed,  # Seconds Elapsed
@@ -142,9 +148,9 @@ def sync_beat():
             cur_time = datetime.datetime.now()
 
             pos = device.get_current_track_info()['position']
-            print(pos)
+            song = fseq_table[0]
             position = parse_time(pos)
-            sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 2, position, 184)
+            sonos_listener.send_sync_packet(song, FPPSyncType.Sync, position, song.duration)
         except Exception as e:
             print(e)
 
@@ -158,12 +164,12 @@ class MulticastListener(DatagramProtocol):
         # Introduce ourselves to the FPP MultiSync swarm
         self.transport.write(encode_hello_packet(), (MULTICAST_ADDRESS, PORT))
 
-    def send_sync_packet(self, sequence_name: str, fseq_file: SeqDetails, action: int, seconds_elapsed: int, total_seconds: int):
-        self.transport.write(encode_sync_packet(sequence_name, fseq_file, action, seconds_elapsed, total_seconds), (MULTICAST_ADDRESS, PORT))
+    def send_sync_packet(self, fseq_file: SeqDetails, action: FPPSyncType, seconds_elapsed: int, total_seconds: int):
+        self.transport.write(encode_sync_packet(fseq_file.fseq_file, fseq_file, action, seconds_elapsed, total_seconds), (MULTICAST_ADDRESS, PORT))
 
     def send_blanking_data(self):
         pkt = struct.pack(
-            "<4sBHB",
+            "<4sBH",
             "FPPD".encode("ascii"),
             3,  # Message Type
             0,  # Extra Data Length
@@ -184,14 +190,15 @@ def process_sonos_packet(event: soco.events_base.Event):
     global state
     global start_time
 
+    show = fseq_table[0]
     # elapsed = parse_time(event.variables['current_track_position'])
-    duration = parse_time(event.variables["current_track_duration"])
+    duration = parse_time(event.variables["current_track_duration"]) or show.duration
 
     # start_time = cur_time - datetime.timedelta(seconds=elapsed)
 
     state = event.variables['transport_state']
     if state == 'TRANSITIONING':
-        sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 0, 0, duration)
+        sonos_listener.send_sync_packet(show, FPPSyncType.Open, 0, duration)
         if not syncTask.running:
             syncTask.start(1)
     elif state == 'PLAYING':
@@ -201,7 +208,7 @@ def process_sonos_packet(event: soco.events_base.Event):
     elif state == 'STOPPED' or state == 'PAUSED_PLAYBACK':
         if syncTask.running:
             syncTask.stop()
-        sonos_listener.send_sync_packet('romeo.fseq', fseq_table[0], 1, 0, duration)
+        sonos_listener.send_sync_packet(show, FPPSyncType.Start, 0, duration)
         sonos_listener.send_blanking_data()
     # if event.variables["transport_state"] == "PLAYING" or True:
     # print(start_time, duration)
@@ -215,8 +222,7 @@ def process_sonos_packet(event: soco.events_base.Event):
 
 def main():
     global device
-    device = soco.discovery.by_name("Media Room")
-    print(device)
+    device = soco.discovery.by_name("Living Room")
 
     device = device.group.coordinator
     sub = device.avTransport.subscribe(auto_renew=True).subscription
