@@ -16,8 +16,6 @@ from twisted.web import static
 from twisted.web.resource import Resource
 from twisted.web.server import Site
 
-import fseq
-
 soco.config.EVENTS_MODULE = events_twisted
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -34,20 +32,43 @@ class FPPSyncType(Enum):
     Sync = 2
     Open = 3
 
+def int_from_bytes(bytes):
+    # TODO: only valid in python 3.2+
+    return int.from_bytes(bytes, 'little')
+
+def get_number_of_frames(file: str):
+    with open(file, "rb") as f:
+        magic = f.read(4)
+        if magic != b'PSEQ':
+            raise ParserError('invalid fseq file magic: %s', magic)
+
+        f.read(2) # Channel Data Start
+
+        minor_version = int_from_bytes(f.read(1))
+        major_version = int_from_bytes(f.read(1))
+
+        version = (major_version, minor_version)
+        if major_version != 2:
+            raise ParserError('unrecognized fseq file version: %s' % version)
+
+        f.read(6)
+
+        number_of_frames = int_from_bytes(f.read(4))
+
+        return number_of_frames
+
 def load_show_plan() -> list[SeqDetails]:
     result = []
     with open("show_plan.json") as f:
         show_plan = json.load(f)
         for seq in show_plan:
             fseq_file_name = seq["fseq_file"]
-            with open(f"show/{fseq_file_name}", "rb") as fseq_file_fd:
-                fseq_file = fseq.parse(fseq_file_fd)
-                num_frames = fseq_file.number_of_frames
+            num_frames = get_number_of_frames(f"show/{fseq_file_name}")
             result.append(SeqDetails(num_frames, fseq_file_name, seq["stream_path"], seq['seconds']))
     return result
 
-
 fseq_table = load_show_plan()
+print(fseq_table)
 
 MULTICAST_ADDRESS = "239.70.80.80"
 PORT = 32320
@@ -186,7 +207,6 @@ class MulticastListener(DatagramProtocol):
 sonos_listener = MulticastListener()
 
 def process_sonos_packet(event: soco.events_base.Event):
-    pprint(event.variables)
     global state
     global start_time
 
@@ -198,6 +218,7 @@ def process_sonos_packet(event: soco.events_base.Event):
 
     state = event.variables['transport_state']
     if state == 'TRANSITIONING':
+        print(f"Transitioning to {show.fseq_file}")
         sonos_listener.send_sync_packet(show, FPPSyncType.Start, 0, duration)
         if not syncTask.running:
             syncTask.start(1)
