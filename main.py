@@ -198,7 +198,7 @@ def process_sonos_packet(event: soco.events_base.Event):
 
     state = event.variables['transport_state']
     if state == 'TRANSITIONING':
-        sonos_listener.send_sync_packet(show, FPPSyncType.Open, 0, duration)
+        sonos_listener.send_sync_packet(show, FPPSyncType.Start, 0, duration)
         if not syncTask.running:
             syncTask.start(1)
     elif state == 'PLAYING':
@@ -208,7 +208,7 @@ def process_sonos_packet(event: soco.events_base.Event):
     elif state == 'STOPPED' or state == 'PAUSED_PLAYBACK':
         if syncTask.running:
             syncTask.stop()
-        sonos_listener.send_sync_packet(show, FPPSyncType.Start, 0, duration)
+        sonos_listener.send_sync_packet(show, FPPSyncType.Stop, 0, duration)
         sonos_listener.send_blanking_data()
     # if event.variables["transport_state"] == "PLAYING" or True:
     # print(start_time, duration)
