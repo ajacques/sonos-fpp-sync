@@ -5,6 +5,7 @@ import socket
 import struct
 import sys
 import os
+import time
 from enum import Enum
 from collections import namedtuple
 from pprint import pprint
@@ -169,9 +170,11 @@ def sync_beat():
         try:
             cur_time = datetime.datetime.now()
 
+            start = time.time()
             pos = device.get_current_track_info()['position']
+            elapsed = time.time() - start
             position = parse_time(pos)
-            print(pos)
+            print(pos, elapsed)
             sonos_listener.send_sync_packet(song, FPPSyncType.Sync, position, song.duration)
         except Exception as e:
             print(e)
@@ -231,16 +234,9 @@ def process_sonos_packet(event: soco.events_base.Event):
     elif state == 'STOPPED' or state == 'PAUSED_PLAYBACK':
         if syncTask.running:
             syncTask.stop()
+        print(state)
         sonos_listener.send_sync_packet(song, FPPSyncType.Stop, 0, duration)
         sonos_listener.send_blanking_data()
-    # if event.variables["transport_state"] == "PLAYING" or True:
-    # print(start_time, duration)
-    # sonos_listener.transport.write(
-    #    encode_sync_packet("romeo.fseq", fseq_table[0], 0, duration),
-    #    ("192.168.2.199", PORT),
-    # )
-    # print("Packet")
-    # pprint(event)
 
 
 def main():
