@@ -56,7 +56,9 @@ def get_number_of_frames(file: str):
 
         number_of_frames = int_from_bytes(f.read(4))
 
-        return number_of_frames
+        step_time_in_ms = int_from_bytes(f.read(1))
+
+        return number_of_frames, step_time_in_ms
 
 def load_show_plan() -> list[SeqDetails]:
     result = []
@@ -64,7 +66,8 @@ def load_show_plan() -> list[SeqDetails]:
         show_plan = json.load(f)
         for seq in show_plan:
             fseq_file_name = seq["fseq_file"]
-            num_frames = get_number_of_frames(os.path.join("show", fseq_file_name))
+            num_frames, step_time = get_number_of_frames(os.path.join("show", fseq_file_name))
+            print((num_frames * step_time) / 1000.0)
             result.append(SeqDetails(num_frames, fseq_file_name, seq["stream_path"], seq['seconds'], seq['title']))
     return result
 
