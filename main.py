@@ -4,6 +4,7 @@ import signal
 import socket
 import struct
 import sys
+import os
 from enum import Enum
 from collections import namedtuple
 from pprint import pprint
@@ -17,14 +18,13 @@ from twisted.web.resource import Resource
 from twisted.web.server import Site
 
 soco.config.EVENTS_MODULE = events_twisted
-# logging.basicConfig(level=logging.DEBUG)
 
 print("Looking for Sonos devices")
 device = soco.discovery.any_soco()
 
 device = device.group.coordinator
 
-SeqDetails = namedtuple("SequenceInfo", ["num_frames", "fseq_file", "stream_path", "duration"])
+SeqDetails = namedtuple("SequenceInfo", ["num_frames", "fseq_file", "stream_path", "duration", "title"])
 
 class FPPSyncType(Enum):
     Start = 0
@@ -63,12 +63,12 @@ def load_show_plan() -> list[SeqDetails]:
         show_plan = json.load(f)
         for seq in show_plan:
             fseq_file_name = seq["fseq_file"]
-            num_frames = get_number_of_frames(f"show/{fseq_file_name}")
-            result.append(SeqDetails(num_frames, fseq_file_name, seq["stream_path"], seq['seconds']))
+            num_frames = get_number_of_frames(os.path.join("show", fseq_file_name))
+            result.append(SeqDetails(num_frames, fseq_file_name, seq["stream_path"], seq['seconds'], seq['title']))
     return result
 
 fseq_table = load_show_plan()
-print(fseq_table)
+song_by_filename = {song.title: song for song in fseq_table}
 
 MULTICAST_ADDRESS = "239.70.80.80"
 PORT = 32320
@@ -155,11 +155,12 @@ def encode_hello_packet():
         "".ljust(14, "\0").encode("ascii"),
     )
 
+song = None
+
 def refresh_sonos_start():
     global start_time
     cur_time = datetime.datetime.now()
     pos = device.get_current_track_info()['position']
-    print(pos)
     position = parse_time(pos)
     start_time = cur_time - datetime.timedelta(seconds=position)
 
@@ -169,8 +170,8 @@ def sync_beat():
             cur_time = datetime.datetime.now()
 
             pos = device.get_current_track_info()['position']
-            song = fseq_table[0]
             position = parse_time(pos)
+            print(pos)
             sonos_listener.send_sync_packet(song, FPPSyncType.Sync, position, song.duration)
         except Exception as e:
             print(e)
@@ -209,17 +210,18 @@ sonos_listener = MulticastListener()
 def process_sonos_packet(event: soco.events_base.Event):
     global state
     global start_time
+    global song
 
-    show = fseq_table[0]
+    song = song_by_filename[event.variables['current_track_meta_data'].title]
     # elapsed = parse_time(event.variables['current_track_position'])
-    duration = parse_time(event.variables["current_track_duration"]) or show.duration
+    duration = song.duration
 
     # start_time = cur_time - datetime.timedelta(seconds=elapsed)
 
     state = event.variables['transport_state']
     if state == 'TRANSITIONING':
-        print(f"Transitioning to {show.fseq_file}")
-        sonos_listener.send_sync_packet(show, FPPSyncType.Start, 0, duration)
+        print(f"Transitioning to {song.fseq_file}")
+        sonos_listener.send_sync_packet(song, FPPSyncType.Start, 0, duration)
         if not syncTask.running:
             syncTask.start(1)
     elif state == 'PLAYING':
@@ -229,7 +231,7 @@ def process_sonos_packet(event: soco.events_base.Event):
     elif state == 'STOPPED' or state == 'PAUSED_PLAYBACK':
         if syncTask.running:
             syncTask.stop()
-        sonos_listener.send_sync_packet(show, FPPSyncType.Stop, 0, duration)
+        sonos_listener.send_sync_packet(song, FPPSyncType.Stop, 0, duration)
         sonos_listener.send_blanking_data()
     # if event.variables["transport_state"] == "PLAYING" or True:
     # print(start_time, duration)
