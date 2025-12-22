@@ -6,4 +6,5 @@ requires-python = ">=3.13"
 dependencies = [
     "soco>=0.30.10",
     "twisted>=25.5.0",
+    "wakepy>=0.10.2.post1",
 ]

@@ -9,6 +9,7 @@ import time
 from enum import Enum
 from collections import namedtuple
 from pprint import pprint
+import wakepy
 
 import soco
 from soco import events_twisted
@@ -212,6 +213,7 @@ class MulticastListener(DatagramProtocol):
 
 
 sonos_listener = MulticastListener()
+wake_lock = wakepy.keep.presenting()
 
 def process_sonos_packet(event: soco.events_base.Event):
     global state
@@ -234,12 +236,16 @@ def process_sonos_packet(event: soco.events_base.Event):
         if not syncTask.running:
             syncTask.start(1)
         refresh_sonos_start()
+        wake_lock.__enter__()
     elif state == 'STOPPED' or state == 'PAUSED_PLAYBACK':
         if syncTask.running:
             syncTask.stop()
         print(state)
         sonos_listener.send_sync_packet(song, FPPSyncType.Stop, 0, duration)
         sonos_listener.send_blanking_data()
+        if wake_lock.active:
+            wake_lock.__exit__(None, None, None)
+            print("Releasing wake lock")
 
 
 def main():
